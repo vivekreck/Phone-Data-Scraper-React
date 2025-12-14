@@ -1,0 +1,77 @@
+# =========================
+# Node.js
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =========================
+# Environment files
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Build outputs
+# =========================
+dist/
+build/
+out/
+coverage/
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
+!.vscode/extensions.json
+
+# IntelliJ / WebStorm
+.idea/
+
+# =========================
+# Prisma
+# =========================
+prisma/dev.db
+prisma/dev.db-journal
+prisma/*.db
+prisma/*.db-journal
+
+# =========================
+# Docker
+# =========================
+docker-data/
+.docker/
+**/docker-volume/
+
+# =========================
+# Testing
+# =========================
+coverage/
+.nyc_output/
+
+# =========================
+# Cache / Temp
+# =========================
+.cache/
+.tmp/
+temp/
+
+# =========================
+# Misc
+# =========================
+*.swp
+*.swo
+*.pid

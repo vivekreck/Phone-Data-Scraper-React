@@ -31,7 +31,7 @@ export default function PhoneScraperApp() {
     }
 
     try {
-      const response = await fetch('http://localhost:3001/api/scrape', {
+      const response = await fetch('https://phone-data-scraper.vercel.app/api/scrape', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

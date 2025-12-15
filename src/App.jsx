@@ -1,40 +1,60 @@
-import React, { useState } from 'react';
-import { Download, Loader2, CheckCircle2, XCircle, Phone } from 'lucide-react';
+import React, { useState, useRef } from "react";
+import { Download, Loader2, CheckCircle2, XCircle, Phone, TrendingUp, AlertTriangle } from "lucide-react";
 
 export default function PhoneScraperApp() {
-  const [apiKey, setApiKey] = useState('');
-  const [phoneNumbers, setPhoneNumbers] = useState('');
+  const [apiKey, setApiKey] = useState("");
+  const [phoneNumbers, setPhoneNumbers] = useState("");
   const [rangeSize, setRangeSize] = useState(600);
   const [minAge, setMinAge] = useState(78);
   const [maxAge, setMaxAge] = useState(96);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [progress, setProgress] = useState({ processed: 0, total: 0 });
-  const [results, setResults] = useState(null);
-  const [error, setError] = useState('');
+  const [progress, setProgress] = useState({ processed: 0, total: 0, rateLimitHits: 0 });
+  const [results, setResults] = useState({
+    ageRange: [],
+    otherAges: [],
+    failed: [],
+  });
+  const [error, setError] = useState("");
+  const [isComplete, setIsComplete] = useState(false);
+
+  // Use refs to accumulate data without causing re-renders on every update
+  const accumulatedResults = useRef({
+    ageRange: [],
+    otherAges: [],
+    failed: [],
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
+    setError("");
     setIsProcessing(true);
-    setProgress({ processed: 0, total: 0 });
-    setResults(null);
+    setIsComplete(false);
+    setProgress({ processed: 0, total: 0, rateLimitHits: 0 });
+    setResults({ ageRange: [], otherAges: [], failed: [] });
+
+    // Reset accumulated results
+    accumulatedResults.current = {
+      ageRange: [],
+      otherAges: [],
+      failed: [],
+    };
 
     const phoneList = phoneNumbers
-      .split('\n')
-      .map(p => p.trim())
-      .filter(p => p.length > 0);
+      .split("\n")
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
 
     if (phoneList.length === 0) {
-      setError('Please enter at least one phone number');
+      setError("Please enter at least one phone number");
       setIsProcessing(false);
       return;
     }
 
     try {
-      const response = await fetch('https://phone-data-scraper.vercel.app/api/scrape', {
-        method: 'POST',
+      const response = await fetch("http://localhost:3001/api/scrape", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           apiKey,
@@ -47,29 +67,55 @@ export default function PhoneScraperApp() {
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
+      let buffer = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+
+        // Keep the last incomplete line in the buffer
+        buffer = lines.pop() || "";
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = JSON.parse(line.slice(6));
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
 
-            if (data.type === 'progress') {
-              setProgress({
-                processed: data.processed,
-                total: data.total,
-                ageRangeCount: data.ageRangeCount,
-                otherAgesCount: data.otherAgesCount,
-                failedCount: data.failedCount,
-              });
-            } else if (data.type === 'complete') {
-              setResults(data.results);
-              setIsProcessing(false);
+              if (data.type === "batch") {
+                // Accumulate batch data
+                accumulatedResults.current.ageRange.push(...data.data.ageRange);
+                accumulatedResults.current.otherAges.push(...data.data.otherAges);
+                accumulatedResults.current.failed.push(...data.data.failed);
+
+                // Update progress
+                setProgress({
+                  processed: data.progress.processed,
+                  total: data.progress.total,
+                  rateLimitHits: data.progress.rateLimitHits || 0,
+                });
+
+                // Update displayed results (create new objects to trigger re-render)
+                setResults({
+                  ageRange: [...accumulatedResults.current.ageRange],
+                  otherAges: [...accumulatedResults.current.otherAges],
+                  failed: [...accumulatedResults.current.failed],
+                });
+              } else if (data.type === "complete") {
+                setIsProcessing(false);
+                setIsComplete(true);
+                console.log("Scraping completed:", data.processed, "records processed");
+                if (data.rateLimitHits > 0) {
+                  console.log("Rate limit hits:", data.rateLimitHits);
+                }
+              } else if (data.type === "error") {
+                setError(`Server error: ${data.message}`);
+                setIsProcessing(false);
+              }
+            } catch (parseError) {
+              console.error("Error parsing SSE data:", parseError);
             }
           }
         }
@@ -83,19 +129,19 @@ export default function PhoneScraperApp() {
   const downloadCSV = (data, filename) => {
     let csvContent;
 
-    if (filename.includes('failed')) {
-      const headers = 'Number,StatusCode,Reason\n';
-      const rows = data.map(row => `"${row.Number}","${row.StatusCode}","${row.Reason}"`).join('\n');
+    if (filename.includes("failed")) {
+      const headers = "Number,StatusCode,Reason\n";
+      const rows = data.map((row) => `"${row.Number}","${row.StatusCode}","${row.Reason}"`).join("\n");
       csvContent = headers + rows;
     } else {
-      const headers = 'Name,Number,Age\n';
-      const rows = data.map(row => `"${row.Name}","${row.Number}",${row.Age}`).join('\n');
+      const headers = "Name,Number,Age\n";
+      const rows = data.map((row) => `"${row.Name}","${row.Number}",${row.Age}`).join("\n");
       csvContent = headers + rows;
     }
 
-    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const blob = new Blob([csvContent], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
     a.download = filename;
     a.click();
@@ -113,11 +159,20 @@ export default function PhoneScraperApp() {
             <h1 className="text-3xl font-bold text-gray-800">Phone Data Scraper</h1>
           </div>
 
+          {/* Rate Limit Warning */}
+          <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg p-4">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5" />
+              <div className="text-sm text-amber-800">
+                <p className="font-semibold mb-1">Rate Limit Protection Active</p>
+                <p>Processing 5 requests per batch with 1.5s delays to avoid API limits. Auto-retry on 429 errors.</p>
+              </div>
+            </div>
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                ScraperAPI Key *
-              </label>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">ScraperAPI Key *</label>
               <input
                 type="text"
                 value={apiKey}
@@ -130,9 +185,7 @@ export default function PhoneScraperApp() {
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Phone Numbers (one per line) *
-              </label>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Phone Numbers (one per line) *</label>
               <textarea
                 value={phoneNumbers}
                 onChange={(e) => setPhoneNumbers(e.target.value)}
@@ -142,16 +195,12 @@ export default function PhoneScraperApp() {
                 required
                 disabled={isProcessing}
               />
-              <p className="text-xs text-gray-500 mt-1">
-                Enter base phone numbers without dashes
-              </p>
+              <p className="text-xs text-gray-500 mt-1">Enter base phone numbers without dashes</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Range Size
-                </label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Range Size</label>
                 <input
                   type="number"
                   value={rangeSize}
@@ -164,9 +213,7 @@ export default function PhoneScraperApp() {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Min Age
-                </label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Min Age</label>
                 <input
                   type="number"
                   value={minAge}
@@ -179,9 +226,7 @@ export default function PhoneScraperApp() {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Max Age
-                </label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Max Age</label>
                 <input
                   type="number"
                   value={maxAge}
@@ -212,17 +257,31 @@ export default function PhoneScraperApp() {
                   Processing...
                 </>
               ) : (
-                'Start Scraping'
+                "Start Scraping"
               )}
             </button>
           </form>
 
-          {isProcessing && progress.total > 0 && (
+          {(isProcessing || isComplete) && progress.total > 0 && (
             <div className="mt-8 bg-gray-50 rounded-lg p-6">
               <div className="mb-4">
                 <div className="flex justify-between text-sm font-medium text-gray-700 mb-2">
-                  <span>Progress</span>
-                  <span>{progress.processed} / {progress.total}</span>
+                  <span className="flex items-center gap-2">
+                    {isComplete ? (
+                      <>
+                        <CheckCircle2 className="w-4 h-4 text-green-600" />
+                        <span>Complete!</span>
+                      </>
+                    ) : (
+                      <>
+                        <TrendingUp className="w-4 h-4 text-indigo-600" />
+                        <span>Progress</span>
+                      </>
+                    )}
+                  </span>
+                  <span>
+                    {progress.processed} / {progress.total}
+                  </span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-3">
                   <div
@@ -230,36 +289,59 @@ export default function PhoneScraperApp() {
                     style={{ width: `${progressPercent}%` }}
                   ></div>
                 </div>
+
+                {/* Rate limit indicator */}
+                {progress.rateLimitHits > 0 && (
+                  <div className="mt-2 text-xs text-amber-600 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" />
+                    <span>{progress.rateLimitHits} rate limit hits (auto-retried)</span>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-3 gap-4 text-center">
-                <div className="bg-white rounded-lg p-3">
-                  <div className="text-2xl font-bold text-green-600">
-                    {progress.ageRangeCount || 0}
-                  </div>
+                <div className="bg-white rounded-lg p-3 border-2 border-green-200">
+                  <div className="text-2xl font-bold text-green-600">{results.ageRange.length}</div>
                   <div className="text-xs text-gray-600">Target Age</div>
                 </div>
-                <div className="bg-white rounded-lg p-3">
-                  <div className="text-2xl font-bold text-blue-600">
-                    {progress.otherAgesCount || 0}
-                  </div>
+                <div className="bg-white rounded-lg p-3 border-2 border-blue-200">
+                  <div className="text-2xl font-bold text-blue-600">{results.otherAges.length}</div>
                   <div className="text-xs text-gray-600">Other Ages</div>
                 </div>
-                <div className="bg-white rounded-lg p-3">
-                  <div className="text-2xl font-bold text-red-600">
-                    {progress.failedCount || 0}
-                  </div>
+                <div className="bg-white rounded-lg p-3 border-2 border-red-200">
+                  <div className="text-2xl font-bold text-red-600">{results.failed.length}</div>
                   <div className="text-xs text-gray-600">Failed</div>
                 </div>
               </div>
+
+              {/* Show sample of latest data */}
+              {results.ageRange.length > 0 && (
+                <div className="mt-4 bg-white rounded-lg p-4">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-2">Latest Target Age Matches:</h3>
+                  <div className="space-y-1 text-xs font-mono text-gray-600 max-h-32 overflow-y-auto">
+                    {results.ageRange
+                      .slice(-5)
+                      .reverse()
+                      .map((record, idx) => (
+                        <div key={idx} className="flex justify-between">
+                          <span className="truncate max-w-[150px]">{record.Name}</span>
+                          <span>{record.Number}</span>
+                          <span className="font-bold text-green-600">{record.Age}</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {results && (
+          {(results.ageRange.length > 0 || results.otherAges.length > 0 || results.failed.length > 0) && (
             <div className="mt-8 bg-green-50 border border-green-200 rounded-lg p-6">
               <div className="flex items-center gap-2 mb-4">
-                <CheckCircle2 className="w-6 h-6 text-green-600" />
-                <h2 className="text-xl font-bold text-gray-800">Results Ready!</h2>
+                <Download className="w-6 h-6 text-green-600" />
+                <h2 className="text-xl font-bold text-gray-800">
+                  {isComplete ? "Download Results" : "Download Current Data"}
+                </h2>
               </div>
 
               <div className="space-y-3">
@@ -275,7 +357,7 @@ export default function PhoneScraperApp() {
 
                 {results.otherAges.length > 0 && (
                   <button
-                    onClick={() => downloadCSV(results.otherAges, 'other-ages.csv')}
+                    onClick={() => downloadCSV(results.otherAges, "other-ages.csv")}
                     className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition duration-200"
                   >
                     <Download className="w-5 h-5" />
@@ -285,7 +367,7 @@ export default function PhoneScraperApp() {
 
                 {results.failed.length > 0 && (
                   <button
-                    onClick={() => downloadCSV(results.failed, 'failed-requests.csv')}
+                    onClick={() => downloadCSV(results.failed, "failed-requests.csv")}
                     className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition duration-200"
                   >
                     <Download className="w-5 h-5" />
@@ -293,12 +375,19 @@ export default function PhoneScraperApp() {
                   </button>
                 )}
               </div>
+
+              {!isComplete && (
+                <p className="text-xs text-gray-600 mt-3 text-center">
+                  💡 You can download data while processing continues
+                </p>
+              )}
             </div>
           )}
         </div>
 
-        <div className="mt-6 text-center text-sm text-gray-600">
-          <p>💡 Tip: The scraper will process {rangeSize} consecutive numbers for each base phone number</p>
+        <div className="mt-6 text-center text-sm text-gray-600 space-y-1">
+          <p>💡 Processing with intelligent rate limiting (5 per batch, 1.5s delays)</p>
+          <p>🔄 Auto-retry up to 3 times with exponential backoff on rate limits</p>
         </div>
       </div>
     </div>
